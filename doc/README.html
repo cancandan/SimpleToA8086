@@ -1,0 +1,167 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="content-type" content="text/html; charset=utf-8">
+<link rel="stylesheet" type="text/css" href="README.css">
+</head>
+<body>
+<h1>Simple Language to A86 Translator</h1>
+<h2>Introduction:</h2>
+<p>This project uses the <a href="https://github.com/antlr/antlr4">ANTLR4 parser generator</a> to translate the Simple language to A86 assembler language.</p>
+<p>Given a grammar file conforming to a syntax derived from EBNF, ANTLR4 generates lexer, parser and utility classes for navigating the parse tree. The application code that actually generates the .asm file are SimpleToA86Translator and SimpleToA86Visitor classes.</p>
+<hr>
+<h2>The Grammar File:</h2>
+<p>The grammar file in the project is named <strong>Simple.g4</strong> and it is almost a direct translation from the project document</p>
+<pre><code>grammar Simple;
+
+prog:   stm+ EOF;
+
+stm :   ID ':=' expr            #assign
+    |   'print' expr            #print
+    |   'if' expr 'then' stm    #ifthen
+    |   'while' expr 'do' stm   #whiledo
+    |   'begin' opt_stmts 'end' #beginend
+    ;
+
+opt_stmts : stmt_list?;
+
+stmt_list : stm (';' stm)*;
+
+expr:   expr op=MUL expr        #mul
+    |   expr op=DIV expr        #div
+    |   expr op=MOD expr        #mod
+    |   expr op=ADD expr        #add
+    |   expr op=SUB expr        #sub
+    |   INT                     #int
+    |   ID                      #id
+    |   '(' expr ')'            #parens
+    ;
+
+MUL :   '*' ;
+DIV :   '/' ;
+MOD :   'mod';
+ADD :   '+' ;
+SUB :   '-' ;
+ID  :   [a-zA-Z]+ ;      // match identifiers
+INT :   [0-9]+ ;         // match integers
+WS: [ \r\n\t] + -&gt; skip;
+</code></pre>
+
+<p>The parser rules are in lowercase and at the top, lexer rules are capitalized and at the bottom.</p>
+<p>Note that for each choice specified using "|" in a rule, there is a label at the end. For example
+#assign, #print, #ifthen, #whiledo. The antlr4 tool creates methods corresponding to those in the generated classes which the application programmer like myself can call while traversing the parse tree. The order of the rules are also important for the antlr4 to resolve the precedence order. </p>
+<p>The rule at the end of the file: </p>
+<pre><code>WS: [ \r\n\t] + -&gt; skip;
+</code></pre>
+
+<p>is a directive telling the lexer to skip whitespace.</p>
+<hr>
+<h2>Generating the lexer, parser and the visitor classes:</h2>
+<p>The file <strong>build.sh</strong> in the project root generates those classes and then compiles all the java code in the project, including SimpleToA86Visitor.java and SimpleToA86Translator.java. It executes two commands:</p>
+<p>1) The command below generates the java code from the supplied <strong>Simple.g4</strong> file to the <strong>gen</strong> directory.</p>
+<pre><code>java -cp &quot;.:lib/antlr-4.7-complete.jar:$CLASSPATH&quot; org.antlr.v4.Tool Simple.g4 -visitor -o gen
+</code></pre>
+
+<p>2) Then the project is compiled with:</p>
+<pre><code>javac -cp &quot;.:lib/antlr-4.7-complete.jar:$CLASSPATH&quot; -sourcepath &quot;.:gen&quot; -d &quot;build&quot; *.java
+</code></pre>
+
+<p>Run <code>./build.sh</code> to build the project</p>
+<hr>
+<h2>Running the translator:</h2>
+<p>Execute run.sh on a .sim file </p>
+<p>Example:</p>
+<pre><code>./run.sh test/gcd.sim
+</code></pre>
+
+<p>This produces the out.asm file</p>
+<hr>
+<h2>The Visitor and the class with the main method (SimpleToA86Visitor and SimpleToA86Translator):</h2>
+<p>The class with the main method is <strong>SimpleToA86Translator</strong>. Here we setup the stage for parsing by instantiating the lexer, parser and visitor objects. The tree traversal is started from the <strong>prog</strong> rule. We assemble the .asm file in pieces. </p>
+<p>The pieces are: </p>
+<p>1) The header for a DOS assembly code ie. <code>org 100h</code></p>
+<p>2) The asm code string returned from the visitor</p>
+<p>3) The asm code for program termination in DOS</p>
+<p>4) The asm code for the "myprint" procedure</p>
+<p>5) The asm code for the variable declarations.</p>
+<p>These are concatenated to form the final output file out.asm.</p>
+<p>After ANTLR4 code generation, we end up with a <strong>SimpleBaseVisitor</strong>, a base class to be extended by the application and implement the translation logic.
+So I created the class <strong>SimpleToA86Visitor</strong> that extends from this base class where the visitXXX methods are overriden. Note that <strong>SimpleBaseVisitor</strong> uses Java generics, so I actually extend <strong>SimpleBaseVisitor&lt;String&gt;</strong>. By doing this all the visitXXX methods now return <strong>String</strong> (Here XXX corresponds to a rule label specified in the grammar file as discussed above). The <strong>String</strong> objects those methods return correspond to the assembler fragments necessary to execute that rule. Note that when using the visitor mechanism one is responsible for traversing the tree by calling visitXXX for the children of the current node inside the visitXXX methods. </p>
+<p>In the <strong>SimpleBaseVisitor</strong> class I keep track of when a variable is first seen in <strong>variableDefs</strong> object, so that I create them only once.
+Since there can be multiple or nested <strong>if then</strong> or <strong>while do</strong> statements and since they require labels in assembly code for jumping, I also keep track of a <strong>loopIndex</strong> </p>
+<hr>
+<h2>Testing:</h2>
+<p>I created some .sim programs for testing. The png files are created with antlr</p>
+<p>1) factorial.sim : Calculates the factorial of 8 and prints it.</p>
+<pre><code>x:=8
+r:=1
+
+while x do
+begin
+        r:=r*x;
+        x:=x-1
+end
+print r
+</code></pre>
+
+<p><img alt="alt text" src="factorial.png" title="Factorial Parse Tree"></p>
+<p>2) triangularNums.sim : Calculate and print the first 10 triangular numbers.</p>
+<pre><code>i:=1
+while 11-i do
+begin
+        t:=i*(i+1)/2;
+        print t;
+        i:=i+1
+end
+</code></pre>
+
+<p><img alt="alt text" src="triangularNumbers.png" title="Triangular Numbers Parse Tree"></p>
+<p>3) gcd.sim : Calculates the gcd of 29034 and 4482 and prints it.</p>
+<pre><code>a:=29034
+b:=4482
+t:=0
+while b do
+      begin
+        t:=b;
+        b:=a mod b;
+        a:=t
+      end
+print a
+</code></pre>
+
+<p><img alt="alt text" src="gcd.png" title="Gcd Parse Tree"></p>
+<p>4) exprFromLectureNotes.sim : The expression from the lecture notes with t=13, m=7, d=19</p>
+<pre><code>t:=13
+m:=7
+d:=19
+val:=(461*t)/4+(200*m+2)/5+d
+print val
+</code></pre>
+
+<p><img alt="alt text" src="expr.png" title="Expression Parse Tree"></p>
+<p>5) innerLoop.sim : prints i*j where 1&lt;=i&lt;=5, 1&lt;=j&lt;=5</p>
+<pre><code>i:=1
+j:=1
+while 6-i do
+      begin
+            while 6-j do
+                  begin
+                      print i*j;
+                      j:=j+1
+                  end;
+            j:=1;
+            i:=i+1
+      end
+</code></pre>
+
+<p><img alt="alt text" src="innerLoop.png" title="InnerLoop Parse Tree"></p>
+<p>6) nestedIf.sim : testing nested if statements</p>
+<pre><code>x:=1
+y:=1
+z:=1
+if x then if y then if z then print (x+y+z)
+</code></pre>
+
+<p><img alt="alt text" src="nestedIf.png" title="NestedIf Parse Tree"></p>
+</body>
+</html>
